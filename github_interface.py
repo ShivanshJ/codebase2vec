@@ -44,7 +44,7 @@ def load_github_codebase(repo_url):
                     # file_response.raise_for_status()
                     content = file_response.text.strip()
                     if content:
-                        snippets.append(content)
+                        snippets.append((content, item.get('path', '')))
                 except requests.RequestException as e:
                     print(f"Error fetching file {item.get('name')}: {e}")
             elif item.get('type') == 'dir':

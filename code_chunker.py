@@ -13,10 +13,24 @@ from tree_sitter import Node
 from tree_sitter_languages import get_parser
  
 
+
+
+def chunk_code(source_code: str) -> List[str]:
+    code_chunks = []
+    language = guess_language_all_methods(source_code)
+    for chunk in BlockAwareCodeSplitter.split_text(source_code, language):
+        # continue
+        print (chunk)
+        code_chunk_str = chunk.extract_lines(source_code)
+        print(code_chunk_str + "\n\n====================\n\n")
+        code_chunks.append(code_chunk_str)
+    return code_chunks
+
+
+
 """
 As a brief helper data structure, we first implemented the following dataclass for representing a slice of a string:
 """
-
 @dataclass
 class Chunk:
     # Represents a slice of a string, in bytes (1 character = 1 byte)
@@ -250,18 +264,6 @@ class BlockAwareCodeSplitter:
         return (func_span.start <= chunk_span.end and func_span.end >= chunk_span.start)
     
 
-
-
-def chunk_code(source_code: str) -> List[str]:
-    code_chunks = []
-    language = guess_language_all_methods(source_code)
-    for chunk in BlockAwareCodeSplitter.split_text(source_code, language):
-        # continue
-        print (chunk)
-        code_chunk = chunk.extract_lines(source_code)
-        print(code_chunk + "\n\n====================\n\n")
-        code_chunks.append(code_chunk)
-    return code_chunks
 
 
 
