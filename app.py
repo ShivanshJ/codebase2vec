@@ -1,12 +1,12 @@
 import os
 import streamlit as st
 import code_chunker
-import github_interface  # Ensure this is the correct import for your GitHub functions
-from code_embedding import CodeEmbedding  # Import the CodeEmbedding class
+from github_interface import Snippet, load_github_codebase
+from embedding import CodeEmbedding  # Import the CodeEmbedding class
 from dotenv import load_dotenv
 
 from vector_store import VectorStore, VectorNode
-
+from snippet_database import SnippetDatabase
 load_dotenv()
 
 
@@ -14,16 +14,23 @@ class CodebaseLoader:
     def __init__(self, local_dir=None, github_repo=None):
         self.local_dir = local_dir
         self.github_repo = github_repo
+        self.db = SnippetDatabase()
+        self.repo_id = self.db.make_repo_id(self.github_repo)
         self.snippets = []
 
-    def load_codebase(self):
+    def load_codebase(self) -> list[Snippet]:
+        
+        if self.db.repo_exists(self.repo_id):
+            print ("CodebaseLoader :  repo exists")
+            return self.db.load_snippets(self.repo_id)
+        
         if self.github_repo:
-            self.snippets = github_interface.load_github_codebase(self.github_repo)
+            self.snippets = load_github_codebase(self.github_repo)
         elif self.local_dir:
             self.snippets = self.load_local_codebase(self.local_dir)
         return self.snippets
 
-    def load_local_codebase(self, directory):
+    def load_local_codebase(self, directory) -> list[Snippet]:
         snippets = []
         for filename in os.listdir(directory):
             if filename.startswith('.'):
@@ -36,7 +43,9 @@ class CodebaseLoader:
                     with open(filepath, 'r') as file:
                         content = file.read().strip()
                         if content:
-                            snippets.append(content)
+                            newSnippet = Snippet(content=content, file_path=filepath)
+                            snippets.append(newSnippet)
+                            self.db.save_snippet(self.repo_id, newSnippet)
         return snippets
 
     @staticmethod
@@ -52,7 +61,6 @@ class CodebaseLoader:
 
 def main():
     st.title("Codebase Ingestion and Embedding Generation")
-    
 
     # Initialize session state
     if 'step' not in st.session_state:
@@ -60,7 +68,7 @@ def main():
     if 'input1' not in st.session_state:
         st.session_state.input1 = ""
 
-    vector_store, embedding_generator = VectorStore(collection_name="dev_codebase", vector_size=768), CodeEmbedding()
+    vector_store, embedding_generator = VectorStore(collection_name="dev_codebase", vector_size=768), CodeEmbedding(use_sentence_transformer=True)
     github_repo_url = st.text_input("Enter GitHub Repository (owner/repo):",placeholder="samarthaggarwal/always-on-debugger",)
     local_codebase_dir = st.text_input("Or enter local directory path:", placeholder="../invoice-understanding")
     
@@ -79,15 +87,19 @@ def main():
                 try:
                     
                     st.session_state.embeddings, st.session_state.code_chunks = [], []
-                    for snippet, file_path in snippets:
+                    for snippet in snippets:
+                        snippet, file_path = snippet.content, snippet.file_path
                         code_chunks = code_chunker.chunk_code(snippet)
                         for code_chunk in code_chunks:
                             st.session_state.code_chunks.append((code_chunk, file_path))
-                            embedding = embedding_generator.generate_embeddings(code_chunk)
-                            print (len(embedding), len(code_chunk))
+                            
+                            embedding = embedding_generator.generate_embeddings(file_path + code_chunk)
+                            
+                            print (len(embedding), len(code_chunk), file_path)
                             st.session_state.embeddings.append(embedding)
-                            v = VectorNode(embedding=embedding, metadata={"code_chunk": code_chunk, "file_path": file_path})
-                            vector_store.add_vectors([v])
+
+                            # v = VectorNode(embedding=embedding, metadata={"code_chunk": code_chunk, "file_path": file_path})
+                            # vector_store.add_vectors([v])
                         
                 except Exception as e:
                     print(e)
@@ -105,30 +117,29 @@ def main():
 
         if run_query and query:
             with st.spinner('Processing query...'):
-                try:
-
-                    query_embedding = embedding_generator.generate_embeddings(query)                    
-                    res = vector_store.search(query_embedding)
-                    nearest_neighbors = embedding_generator.find_k_nearest_neighbors(query_embedding, st.session_state.embeddings)  # This should work with multiple embeddings
-
-                except Exception as e:
-                    st.error(f"An error occurred while processing the query: {str(e)}")
-                    return
+                # --- QUERY SEARCH ---
+                query_embedding = embedding_generator.generate_embeddings(query)
+                # res = vector_store.search(query_embedding)
+                nearest_neighbors = embedding_generator.find_k_nearest_neighbors(query_embedding, st.session_state.embeddings)  # This should work with multiple embeddings
+                print (nearest_neighbors)
 
             # Printing the results
             if not nearest_neighbors:
                 st.write("No relevant matches found.")
             else:
-                top_matches = nearest_neighbors[:2]
+                top_matches = nearest_neighbors
                 st.write("Top Matches:")
+
                 for index in top_matches:
                     st.markdown(f"**File: {st.session_state.code_chunks[index][1]}**")
                     st.code(f"Matched Code:\n{st.session_state.code_chunks[index][0]}...\n", language="python")
 
                 st.title("Qdrant Top Matches:")
-                for record in res[:4]:
-                    st.markdown(f"**File: {record.payload['file_path']}**")
-                    st.code(f"Matched Code:\n{record.payload['code_chunk']}...\n", language="python" )
+                # for record in res[:4]:
+                #     st.markdown(f"**File: {record.payload['file_path']}**")
+                #     st.code(f"Matched Code:\n{record.payload['code_chunk']}...\n", language="python" )
+
+
         elif run_query and not query:
             st.error("Please enter a query before running.")
 

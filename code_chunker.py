@@ -153,9 +153,6 @@ class TextChunker:
         """
         Coalesce small chunks into larger ones.
 
-        This method combines smaller chunks into larger ones, ensuring that each chunk is at least
-        'coalesce' characters long and contains at least one newline character.
-
         Args:
             chunks (list[Chunk]): A list of Chunk objects representing the initial chunks.
             source_code (str): The original source code string.
@@ -211,7 +208,9 @@ class BlockAwareCodeSplitter:
         line_chunks = []
         for b in blocks:
             chunk = b.span
-            line_chunks.append(Chunk(_get_line_number_from_char_index(chunk.start, source_code), _get_line_number_from_char_index(chunk.end, source_code)) )
+            line_chunks.append(
+                Chunk(_get_line_number_from_char_index(chunk.start, source_code), _get_line_number_from_char_index(chunk.end, source_code)) 
+            )
         return line_chunks
 
 
@@ -219,7 +218,7 @@ class BlockAwareCodeSplitter:
     def _extract_blocks(node: Node) -> List[MyBlock]:
         blocks = []
         for child in node.children:
-            block_type = BlockAwareCodeSplitter.__get_block_type_name(child)
+            block_type = BlockAwareCodeSplitter.__get_block_type(child)
             block_name = BlockAwareCodeSplitter._get_block_name(child, child.type)
             block_span = Chunk(child.start_byte, child.end_byte)
             if block_type:
@@ -230,7 +229,7 @@ class BlockAwareCodeSplitter:
         return blocks
     
     @staticmethod
-    def __get_block_type_name(node: Node) -> str:
+    def __get_block_type(node: Node) -> str:
         # These are the types we are interested in
         if node.type in ["function_definition","function_declaration","arrow_function","method_definition"]:
             return 'function'
