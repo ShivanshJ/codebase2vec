@@ -1,12 +1,12 @@
 import os
 import streamlit as st
 import code_chunker
-from github_interface import Snippet, load_github_codebase
-from embedding import CodeEmbedding  # Import the CodeEmbedding class
+from github_interface import load_github_codebase
+from embedding.embedding import CodeEmbedding  # Import the CodeEmbedding class
 from dotenv import load_dotenv
 
-from vector_store import VectorStore, VectorNode
-from snippet_database import SnippetDatabase
+from database.vector_store import VectorStore, VectorNode
+from database.snippet_database import SnippetDatabase, Snippet
 load_dotenv()
 
 
@@ -19,7 +19,6 @@ class CodebaseLoader:
         self.snippets = []
 
     def load_codebase(self) -> list[Snippet]:
-        
         if self.db.repo_exists(self.repo_id):
             print ("CodebaseLoader :  repo exists")
             return self.db.load_snippets(self.repo_id)

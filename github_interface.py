@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import requests
-from snippet_database import SnippetDatabase, Snippet
+from database.snippet_database import SnippetDatabase, Snippet
 
 
 
