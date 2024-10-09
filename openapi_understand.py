@@ -32,9 +32,9 @@ class OpenAPISpecHandler:
         try:
             with open(spec_path, 'r') as file:
                 spec = yaml.safe_load(file)
-                if not is_openapi_spec(spec):
-                    print(f"Error: {spec_path} is not a valid OpenAPI specification.")
-                    return None
+                # if not is_openapi_spec(spec):
+                #     print(f"Error: {spec_path} is not a valid OpenAPI specification.")
+                #     return None
                 self.specs[spec_path] = spec
                 return spec
         except YAMLError as e:
@@ -42,9 +42,13 @@ class OpenAPISpecHandler:
         except IOError as e:
             print(f"Error reading file: {e}")
         return None
+    
+    def generate_embeddings(self):
+        for spec_path, _ in self.specs:
+            self._create_endpoint_embeddings(spec_path)
 
-    def create_endpoint_embeddings(self, spec_path) -> list[OpenAPIEmbedding]:
-        """Create embeddings for each endpoint in the OpenAPI spec."""
+    def _create_endpoint_embeddings(self, spec_path) -> list[OpenAPIEmbedding]:
+        """Create embeddings for each endpoint in an OpenAPI spec file."""
         spec = self._load_openapi_spec(spec_path)
         for path, path_item in spec['paths'].items():
             for method, operation in path_item.items():
@@ -57,7 +61,7 @@ class OpenAPISpecHandler:
                 ))
         return self.openapi_embeddings
 
-    def find_matching_endpoint_with_embeddings(self, user_query):
+    def find_endpoint_with_query(self, user_query):
         """Find the best matching endpoint using embeddings."""
         if not self.openapi_embeddings:
             return None
@@ -73,7 +77,7 @@ class OpenAPISpecHandler:
     
 
     def _get_endpoint_description(self, path, method, operation):
-        return f"{method.upper()} {path}: {operation.get('summary', '')} {operation.get('description', '')}"
+        return f"{method.upper()} {path}: {operation.get('summary', '')} , {operation.get('description', '')}"
 
 
 
@@ -113,11 +117,15 @@ def is_openapi_spec(spec):
 
 # Example usage
 if __name__ == "__main__":
-    spec_path = "./data/Qdrant OpenAPI Main.yaml"
-    openapi_embeddings = OpenAPISpecHandler(code_embedding_obj=CodeEmbedding(use_sentence_transformer=True))
+    spec_path_folder = "./data/"
+    print ('in')
+    openapi_embeddings = OpenAPISpecHandler(code_embedding_obj=CodeEmbedding(use_llm=True))
     
-    openapi_embeddings.create_endpoint_embeddings(spec_path)
-    res = openapi_embeddings.find_matching_endpoint_with_embeddings("delete vector")
+    for file_name in os.listdir(spec_path_folder):
+        spec_path = os.path.join(spec_path_folder, file_name)
+        openapi_embeddings._create_endpoint_embeddings(spec_path)
+
+    res = openapi_embeddings.find_endpoint_with_query("how to query by vector")
     for x in res:
         print('Res: ', x)
     

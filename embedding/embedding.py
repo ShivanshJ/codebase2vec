@@ -1,3 +1,4 @@
+import litellm
 import numpy as np
 from torch import Tensor
 import torch
@@ -9,22 +10,19 @@ from sentence_transformers import SentenceTransformer
 
 # MODEL_NAME = 'microsoft/unixcoder-base'
 MODEL_NAME ='all-MiniLM-L6-v2'
-
-
-class TextEmbedding:
-    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2'):
-        self.model = SentenceTransformer(model_name)
-
-    def generate_embeddings(self, text: str) -> list[float]:
-        return self.model.encode(text).tolist()
+OPENAI_MODEL = 'text-embedding-3-small'
 
 
 
-
+"""
+Main exposed logic
+"""
 class CodeEmbedding:
-    def __init__(self, use_sentence_transformer=False):        
+    def __init__(self, use_sentence_transformer=False, use_llm=False):        
         self.embedding_strategy = None
-        if use_sentence_transformer:
+        if use_llm:
+            self.embedding_strategy = LiteLLMStrategy(OPENAI_MODEL)
+        elif use_sentence_transformer:
             model = SentenceTransformer(MODEL_NAME)
             self.embedding_strategy = SentenceTransformerStrategy(model)
         else:
@@ -70,13 +68,17 @@ class CodeEmbedding:
         return dot_product / (magnitude_A * magnitude_B)
     
 
+
+
+
 """
 Embedding Strategy Interface
 """
-
 class EmbeddingStrategy:
     def generate_embeddings(self, snippet: str) -> list[float]:
         raise NotImplementedError("This method should be implemented by subclasses")
+
+
 
 
 class SentenceTransformerStrategy(EmbeddingStrategy):
@@ -86,6 +88,21 @@ class SentenceTransformerStrategy(EmbeddingStrategy):
     def generate_embeddings(self, snippet: str) -> list[float]:
         embeddings = self.model.encode([snippet])
         return embeddings[0].tolist()
+
+
+
+
+class LiteLLMStrategy(EmbeddingStrategy):
+    def __init__(self, model_name):
+        self.model_name = model_name
+
+    def generate_embeddings(self, snippet: str) -> list[float]:
+        response = litellm.embedding(
+            model=self.model_name,
+            input=snippet
+        )
+        return response['data'][0]['embedding']
+
 
 
 
