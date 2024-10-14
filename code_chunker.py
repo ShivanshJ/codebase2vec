@@ -22,18 +22,20 @@ def chunk_code(source_code: str) -> List[str]:
         # continue
         print (chunk)
         code_chunk_str = chunk.extract_lines(source_code)
-        print(code_chunk_str + "\n\n====================\n\n")
+        # print(code_chunk_str)
+        print ("====================\n")
         code_chunks.append(code_chunk_str)
     return code_chunks
 
 
 
-"""
-As a brief helper data structure, we first implemented the following dataclass for representing a slice of a string:
-"""
+
 @dataclass
 class Chunk:
-    # Represents a slice of a string, in bytes (1 character = 1 byte)
+    """
+    Representing a slice of a string.
+    Start & End can be bytes or lines depending on how you store it.
+    """
     start: int = 0
     end: int = 0
 
@@ -218,52 +220,126 @@ class BlockAwareCodeSplitter:
     def _extract_blocks(node: Node) -> List[MyBlock]:
         blocks = []
         for child in node.children:
-            block_type = BlockAwareCodeSplitter.__get_block_type(child)
-            block_name = BlockAwareCodeSplitter._get_block_name(child, child.type)
-            block_span = Chunk(child.start_byte, child.end_byte)
-            if block_type:
-                print ('Block', block_type, block_name, block_span, end="\n\n") 
-                blocks.append(MyBlock(block_type, block_name, block_span))
+            try:
+                block_type = BlockAwareCodeSplitter._get_block_type(child)
+                block_name = BlockAwareCodeSplitter._get_block_name(child, child.type)
+                block_span = Chunk(child.start_byte, child.end_byte)
+                if block_type:
+                    print ('Block', block_type, block_name, block_span, end="\n\n") 
+                    blocks.append(MyBlock(block_type, block_name, block_span))
+            except Exception as e:
+                print ("Error in CodeChunker, BlockAwareCodeSplitter", e)
+                continue 
             
             blocks.extend(BlockAwareCodeSplitter._extract_blocks(child))
         return blocks
     
     @staticmethod
-    def __get_block_type(node: Node) -> str:
-        # These are the types we are interested in
-        if node.type in ["function_definition","function_declaration","arrow_function","method_definition"]:
-            return 'function'
-        elif node.type in ["class_definition", "class_declaration"]:
-            return 'class'
-        elif node.type in ["jsx_element", "jsx_self_closing_element"]:
-            return 'component'
-        elif node.type == "impl_item":
-            return 'impl'
-        else:
-            return None
+    def _get_block_type(node: Node) -> str:
+        try:
+            # These are the types we are interested in
+            if node.type in ["function_definition","function_declaration","arrow_function","method_definition"]:
+                return 'function'
+            elif node.type in ["class_definition", "class_declaration"]:
+                return 'class'
+            elif node.type in ["jsx_element", "jsx_self_closing_element"]:
+                return 'component'
+            elif node.type == "impl_item":
+                return 'impl'
+            else:
+                return None
+        except Exception as e:
+            print ("Error in CodeChunker, BlockAwareCodeSplitter _get_block_type()", e)
     
     @staticmethod
     def _get_block_name(node: Node, block_type: str) -> str:
-        if block_type in ['function_definition', 'class_definition', 'method_definition']:
-            name_node = node.child_by_field_name('name')
-        elif block_type == 'impl_item':
-            name_node = node.child_by_field_name('trait') or node.child_by_field_name('type')
-        elif block_type in ['jsx_element', 'jsx_fragment']:
-            opening_element = node.child_by_field_name('opening_element')
-            if opening_element:
-                name_node = opening_element.child_by_field_name('name')
+        try:         
+            if block_type in ['function_definition', 'class_definition', 'method_definition']:
+                name_node = node.child_by_field_name('name')
+            elif block_type == 'impl_item':
+                name_node = node.child_by_field_name('trait') or node.child_by_field_name('type')
+            elif block_type in ['jsx_element', 'jsx_fragment']:
+                opening_element = node.child_by_field_name('opening_element')
+                if opening_element:
+                    name_node = opening_element.child_by_field_name('name')
+                else:
+                    return "unnamed_jsx"
             else:
-                return "unnamed_jsx"
-        else:
-            return "unnamed"
-        
-        return name_node.text.decode('utf-8') if name_node else "unnamed"
+                return "unnamed"
+            
+            return name_node.text.decode('utf-8') if name_node else "unnamed"
+        except Exception as e:
+            print ("Error in CodeChunker, BlockAwareCodeSplitter _get_block_name()", e)
+
 
     def _overlaps(self, func_span, chunk_span):
         return (func_span.start <= chunk_span.end and func_span.end >= chunk_span.start)
     
 
 
+
+
+
+import unittest
+
+class TestBlockAwareCodeSplitter(unittest.TestCase):
+    def setUp(self):
+        self.splitter = BlockAwareCodeSplitter()
+
+    def test_split_text(self):
+        code = """
+def function1():
+    print("Hello")
+
+class TestClass:
+    def method1(self):
+        return "World"
+
+    def method2(self):
+        return "hell"
+
+def function2():
+    return 42
+        """
+        chunks = list(self.splitter.split_text(code, 'python'))
+        
+        self.assertEqual(len(chunks), 5)
+        print (chunks)
+        print (chunks[0].extract_lines(code))
+        self.assertIn('function1', chunks[0].extract_lines(code))
+        self.assertIn('TestClass', chunks[1].extract_lines(code))
+        self.assertIn('method1', chunks[2].extract_lines(code))
+        self.assertIn('method2', chunks[3].extract_lines(code))
+        self.assertIn('function2', chunks[4].extract_lines(code))
+
+    def test_get_block_type(self):
+        parser = get_parser('python')
+        tree = parser.parse(bytes("def test_function():\n    pass", 'utf8'))
+        root_node = tree.root_node
+        function_node = root_node.children[0]
+        
+        block_type = self.splitter._get_block_type(function_node)
+        self.assertEqual(block_type, 'function')
+
+    def test_get_block_name(self):
+        parser = get_parser('python')
+        tree = parser.parse(bytes("def test_function():\n    pass", 'utf8'))
+        root_node = tree.root_node
+        function_node = root_node.children[0]
+        
+        block_name = self.splitter._get_block_name(function_node, 'function_definition')
+        self.assertEqual(block_name, 'test_function')
+
+    def test_overlaps(self):
+        chunk1 = Chunk(0, 10)
+        chunk2 = Chunk(5, 15)
+        chunk3 = Chunk(11, 20)
+        
+        self.assertTrue(self.splitter._overlaps(chunk1, chunk2))
+        self.assertFalse(self.splitter._overlaps(chunk1, chunk3))
+
+if __name__ == '__main__':
+    unittest.main()
 
 
 # Test code:
