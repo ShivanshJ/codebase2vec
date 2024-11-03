@@ -2,7 +2,7 @@
 import os
 from dataclasses import dataclass
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import PointStruct, PointIdsList, FilterSelector, Filter, Distance,VectorParams
+from qdrant_client.http.models import PointStruct, PointIdsList, FilterSelector, Filter, Distance,VectorParams, FieldCondition, MatchValue
 
 
 @dataclass
@@ -49,13 +49,33 @@ class VectorStore:
                 else:
                     print("Max retries reached. Unable to connect to Qdrant server.")
                     return False
+                
+
+    def does_embedding_exist(self, repo_id):
+        # Check if embeddings already exist
+        search_result = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="repo_id",
+                        match=MatchValue(value=repo_id),
+                    ),
+                ]
+            ),
+            limit=1
+        )
+
+        if len(search_result[0]) != 0:
+            print(f"Embeddings for repo {repo_id} already exist. Skipping.")
+            return True
+        return False
   
                 
-    def add_vectors(self, nodes: list[VectorNode]):
-        points = [
-            PointStruct(id=node.id, vector=node.embedding, payload=node.metadata)
-            for node in nodes
-        ]
+    def add_vectors(self, nodes: list[VectorNode], repo_id=1):
+        points = []
+        for node in nodes:
+            points.append(PointStruct(id=node.id, vector=node.embedding, payload=node.metadata))
         self.client.upsert(collection_name=self.collection_name, points=points)
 
 
