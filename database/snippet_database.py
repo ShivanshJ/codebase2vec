@@ -33,8 +33,18 @@ class SnippetDatabase:
         if os.path.exists(self.db_file):
             with open(self.db_file, 'rb') as f:
                 all_snippets = pickle.load(f)
-                return all_snippets.get(repo_id, []) 
+                repo_db = all_snippets.get(repo_id, {}) 
+                return repo_db['snippets']
         return []
+    
+    def get_repo_dir_structure(self, repo_id: str) -> str:
+        if os.path.exists(self.db_file):
+            with open(self.db_file, 'rb') as f:
+                all_snippets = pickle.load(f)
+                repo_db = all_snippets.get(repo_id, {}) 
+                return repo_db['dir_structure'] if 'dir_structure' in repo_db else ''
+        return ''
+
     
     def make_repo_id(self, repo_input: str) -> str:
         if repo_input.startswith("http"):
@@ -50,10 +60,16 @@ class SnippetDatabase:
     def save_snippet(self, repo_id: str, snippet: Snippet):
         """Save a snippet to the database."""
         if repo_id not in self.all_snippets:
-            self.all_snippets[repo_id] = []
-        self.all_snippets[repo_id].append(snippet)
+            self.all_snippets[repo_id] = {}
+            self.all_snippets[repo_id]['snippets'] = []
+        self.all_snippets[repo_id]['snippets'].append(snippet)
         with open(self.db_file, 'wb') as f:
             pickle.dump(self.all_snippets, f)
+
+    def save_repo_dir_structure(self, repo_id: str, dir_structure: str):
+        if repo_id not in self.all_snippets:
+            self.all_snippets[repo_id] = {}
+        self.all_snippets[repo_id]['dir_structure'] = dir_structure
 
     def repo_exists(self, repo_id: str):
         """Check if the repository already exists in the database."""

@@ -29,7 +29,18 @@ class CodebaseLoader:
             self.snippets = load_github_codebase(self.github_repo)
         elif self.local_dir:
             self.snippets = self.__load_local_codebase(self.local_dir)
+        self.db.save_repo_dir_structure(self.repo_id, self.extract_dir_structure(self.snippets))
         return self.snippets
+    
+    def extract_dir_structure(self, snippets: list[Snippet]):
+        if dir := self.db.get_repo_dir_structure(self.repo_id):
+            print ("CodebaseLoader :  dir exists")
+            return dir
+        dir_structure = '\n'
+        for snippet in snippets:
+            dir_structure += snippet.file_path
+            dir_structure += '\n'
+        return dir_structure
 
     def __load_local_codebase(self, directory) -> list[Snippet]:
         snippets = []
@@ -38,7 +49,7 @@ class CodebaseLoader:
                 continue
             filepath = os.path.join(directory, filename)
             if os.path.isdir(filepath):
-                snippets.extend(self.load_local_codebase(filepath))
+                snippets.extend(self.__load_local_codebase(filepath))
             else:
                 if self.is_valid_file(filepath):
                     with open(filepath, 'r') as file:
@@ -68,6 +79,7 @@ def main():
     if 'input1' not in st.session_state:
         st.session_state.input1 = ""
 
+    
     vector_store = VectorStore(collection_name="dev_codebase2", vector_size=1536)
     embedding_generator = CodeEmbedding(use_llm=True)
     github_repo_url = st.text_input("Enter GitHub Repository (owner/repo):",placeholder="samarthaggarwal/always-on-debugger",)
@@ -75,21 +87,18 @@ def main():
     
     st.write("")  # Add spacing
     
+    # ---Init loader
+    loader = CodebaseLoader(local_codebase_dir, github_repo_url)
+    snippets: Snippet = loader.load_codebase()
+    dir_structure = loader.extract_dir_structure(snippets)
+    print (dir_structure)
 
     if st.session_state.step == 1 and st.button("Load Codebase"): 
-        loader = CodebaseLoader(local_codebase_dir, github_repo_url)
-        snippets: Snippet = loader.load_codebase()
         st.session_state.embeddings, st.session_state.code_chunks = [], []
-
         if snippets:
             st.success(f"Loaded {len(snippets)} snippets.")
-            
             with st.spinner('Generating embeddings...'):
                 st.session_state.embeddings, st.session_state.code_chunks = [], []
-
-                def do_embeddings_exist():
-                    return False
-
 
                 def make_embeddings():
                     if vector_store.does_embedding_exist(1):
@@ -103,7 +112,6 @@ def main():
                             error_msg = f"An error occurred while generating embeddings {file_path}: {str(e)} "
                             st.error(error_msg)
                             continue
-
                         for code_chunk in code_chunks:
                             try:
                                 # --- Make abstract
@@ -155,42 +163,44 @@ def main():
                 print (nearest_neighbors)
 
             # Printing the results
-            if not nearest_neighbors:
+            top_matches = nearest_neighbors or res
+            if not top_matches:
                 st.write("No relevant matches found.")
             else:
-                top_matches = nearest_neighbors or res
                 st.write("Top Matches:")
 
-                def top_matches_from_vector_store(res):
-                    for x in res[:3]:
-                        st.markdown(f"**File: {x.payload.file_path}**")
-                        st.code(f"Matched Code:\n{x.payload.code_chunk}...\n", language="python")
-                        st.text_area("Abstract:\n", f"{x.payload.abstract}" )
-
-
+                # Uncomment for 'nearest_neighbors'
                 # for index in top_matches:
                 #     st.markdown(f"**File: {st.session_state.code_chunks[index][1]}**")
                 #     st.code(f"Matched Code:\n{st.session_state.code_chunks[index][0]}...\n", language="python")
                 #     st.text_area("Abstract:\n", f"{st.session_state.code_chunks[index][2]}" )
+                
+                def top_matches_from_vector_store(res):
+                    for x in res[:3]:
+                        st.markdown(f"**File: {x.payload['file_path']}**")
+                        st.code(f"Matched Code:\n{x.payload['code_chunk']}...\n", language="python")
+                        st.text_area("Abstract:\n", f"{x.payload['abstract']}" )
+                top_matches_from_vector_store(top_matches)
 
-                top_matches_from_vector_store(res)
-                winning_code_abstract = res[0].payload.abstract
+                winning_code_chunk = res[0].payload['code_chunk']
+                winning_code_abstract = res[0].payload['abstract']
                 st.title("Qdrant Top Matches:")
                 # for record in res[:4]:
                 #     st.markdown(f"**File: {record.payload['file_path']}**")
                 #     st.code(f"Matched Code:\n{record.payload['code_chunk']}...\n", language="python" )
 
                 def generate_code(winning_code_chunk, winning_code_abstract):
-                    print ('in generate_code()')
+                    print ('in generate_code()', dir_structure)
                     llm = LLMAdapter()
                     user_prompt = "generate code based on the following function definition, so i know how to use this as an API"
                     user_prompt += winning_code_abstract
-                    system_prompt = "you are an assistant that ONLY responds with code based on the API function provided by the user. You will show ONLY how to call the API."
+                    system_prompt = "You are an assistant that ONLY responds with code. Your code is based on the API function asked by the user. You will show ONLY how to call the API in code."
+                    system_prompt += "This is the directory structure of the codebase:" + f' ```{dir_structure}``` '
                     st.text_area("User Prompt", user_prompt)
                     st.text_area("System Prompt", system_prompt)
                     return llm.chat_completion(user_prompt, system_prompt)
                     
-                ans = generate_code()
+                ans = generate_code(winning_code_chunk, winning_code_abstract)
                 st.write("Final code:")
                 st.code(f"{ans}",)
 
