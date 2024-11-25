@@ -33,7 +33,6 @@ def load_github_codebase(repo_url, subdirectory='') -> list[Snippet]:
         if isinstance(contents, dict) and 'message' in contents:
             print(f"Error: {contents['message']}")
             return snippets
-
         if not isinstance(contents, list):
             print(f"Unexpected response format: {type(contents)}")
             return snippets
@@ -42,7 +41,6 @@ def load_github_codebase(repo_url, subdirectory='') -> list[Snippet]:
             if not isinstance(item, dict):
                 print(f"Unexpected item format: {type(item)}")
                 continue
-
             if item.get('type') == 'file' and any(item.get('name', '').endswith(ext) for ext in ALLOWED_EXTENSIONS):
                 try:
                     file_response = requests.get(item['download_url'])
