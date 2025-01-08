@@ -22,7 +22,7 @@ class CodebaseLoader:
 
     def load_codebase(self) -> list[Snippet]:
         if self.db.repo_exists(self.repo_id):
-            print ("CodebaseLoader :  repo exists")
+            print ("CodebaseLoader :  repo exists in relational DB")
             return self.db.load_snippets(self.repo_id)
         
         if self.github_repo:
@@ -34,7 +34,7 @@ class CodebaseLoader:
     
     def extract_dir_structure(self, snippets: list[Snippet]):
         if dir := self.db.get_repo_dir_structure(self.repo_id):
-            print ("CodebaseLoader :  dir exists")
+            print ("CodebaseLoader :  dir exists in relational DB")
             return dir
         dir_structure = '\n'
         for snippet in snippets:
@@ -70,6 +70,9 @@ class CodebaseLoader:
 
 
 
+
+
+
 def main():
     st.title("Codebase Ingestion and Embedding Generation")
 
@@ -79,7 +82,6 @@ def main():
     if 'input1' not in st.session_state:
         st.session_state.input1 = ""
 
-    
     vector_store = VectorStore(collection_name="dev_codebase2", vector_size=1536)
     embedding_generator = CodeEmbedding(use_llm=True)
     github_repo_url = st.text_input("Enter GitHub Repository (owner/repo):",placeholder="samarthaggarwal/always-on-debugger",)
@@ -87,13 +89,17 @@ def main():
     
     st.write("")  # Add spacing
     
-    # ---Init loader
-    loader = CodebaseLoader(local_codebase_dir, github_repo_url)
-    snippets: Snippet = loader.load_codebase()
-    dir_structure = loader.extract_dir_structure(snippets)
-    print (dir_structure)
+
 
     if st.session_state.step == 1 and st.button("Load Codebase"): 
+            # ---Init loader
+        loader = CodebaseLoader(local_codebase_dir, github_repo_url)
+        snippets: Snippet = loader.load_codebase()
+        dir_structure = loader.extract_dir_structure(snippets)
+        repo_id = loader.repo_id
+        print (f"Repo ID: {repo_id}, \nDir Structure:\n {dir_structure}")
+
+        st.session_state.dir_structure = dir_structure
         st.session_state.embeddings, st.session_state.code_chunks = [], []
         if snippets:
             st.success(f"Loaded {len(snippets)} snippets.")
@@ -101,9 +107,8 @@ def main():
                 st.session_state.embeddings, st.session_state.code_chunks = [], []
 
                 def make_embeddings():
-                    if vector_store.does_embedding_exist(1):
+                    if vector_store.does_embedding_exist(repo_id):
                         return 
-                    
                     for snippet in snippets:
                         snippet, file_path = snippet.content, snippet.file_path
                         try:
@@ -127,7 +132,7 @@ def main():
 
                                 # --- Store embeddings
                                 v = VectorNode(embedding=embedding, metadata={
-                                    "repo_id": 1, 
+                                    "repo_id": repo_id, 
                                     "code_chunk": code_chunk, 
                                     "file_path": file_path,
                                     "abstract": abstract,})
@@ -153,12 +158,15 @@ def main():
         query = st.text_input("", placeholder="Type your query here...")
         run_query = st.button("Run Query")
 
+        dir_structure = st.session_state.dir_structure
+
         if run_query and query:
             with st.spinner('Processing query...'):
                 query_embedding = embedding_generator.generate_embeddings(query)
-                # --- QUERY SEARCH ---
+                # --- VECTOR_STORE SEARCH ---
                 res = vector_store.search(query_embedding)
                 print ('Embeddings from VS: ', res)
+                # --- LOCAL SEARCH ---
                 nearest_neighbors = embedding_generator.find_k_nearest_neighbors(query_embedding, st.session_state.embeddings)  # This should work with multiple embeddings
                 print (nearest_neighbors)
 

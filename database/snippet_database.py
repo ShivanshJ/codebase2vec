@@ -23,7 +23,7 @@ class SnippetDatabase:
             with open(self.db_file, 'wb') as f:
                 pickle.dump({}, f)
         else:
-            print('Loading existing database file')
+            print('Loading existing .pk database file')
             with open(self.db_file, 'rb') as f:
                 self.all_snippets = pickle.load(f)
     
