@@ -30,7 +30,10 @@ class CodebaseLoader:
         elif self.local_dir:
             self.snippets = self.__load_local_codebase(self.local_dir)
         self.db.save_repo_dir_structure(self.repo_id, self.extract_dir_structure(self.snippets))
-        return self.snippets
+        return self.__test(self.snippets)
+
+    def __test(self, txt):
+        return txt
     
     def extract_dir_structure(self, snippets: list[Snippet]):
         if dir := self.db.get_repo_dir_structure(self.repo_id):
@@ -128,7 +131,7 @@ def main():
                                 print (len(code_chunk), file_path, end=',')
                                 my_text = file_path + abstract + code_chunk
                                 embedding = embedding_generator.generate_embeddings(my_text)
-                                print (len(embedding))
+                                print (f'embedding size ({len(embedding)})')
 
                                 # --- Store embeddings
                                 v = VectorNode(embedding=embedding, metadata={
