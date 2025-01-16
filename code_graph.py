@@ -116,13 +116,23 @@ class TreeSitterCodeParser(CodeParser):
         else:
             return []
 
-    def _extract_blocks_hierarchical(self, node: Node, source_code: str, filepath: str, parent_block: Optional["MyBlock"] = None) -> Optional[MyBlock]:
-        block_type = self._get_block_type(node)
+    def _process_children(self, node: Node, source_code: str, filepath: str, parent_block: Optional["MyBlock"]) -> List[MyBlock]:
+        """Process all children of a node and return valid blocks."""
+        child_blocks = []
+        for child in node.children:
+            if child_block := self._extract_blocks_hierarchical(child, source_code, filepath, parent_block):
+                child_blocks.append(child_block)
+        return child_blocks
 
+    def _extract_blocks_hierarchical(self, node: Node, source_code: str, filepath: str, 
+                                   parent_block: Optional["MyBlock"] = None) -> Optional[MyBlock]:
+        """Extract code blocks from the AST in a hierarchical manner."""
+        block_type = self._get_block_type(node)
+        block_span = Chunk(node.start_byte, node.end_byte)
+        code_content = source_code[block_span.start:block_span.end]
         if block_type:
+            # Create block for current node
             block_name = self._get_block_name(node, block_type)
-            block_span = Chunk(node.start_byte, node.end_byte)
-            code_content = source_code[block_span.start:block_span.end]
 
             full_name = self._get_full_block_name(block_name, parent_block)
             current_block = MyBlock(
@@ -135,37 +145,20 @@ class TreeSitterCodeParser(CodeParser):
                 parent=parent_block
             )
             print ('Blocktype:', block_type, ', Name: ', full_name, ', Span: ', block_span, end="\n\n")
-            if parent_block:
-                parent_block.children.append(current_block)
 
+            if parent_block: parent_block.children.append(current_block)
             self.block_map[full_name] = current_block
-
-            current_block.children = [
-                child_block
-                for child in node.children
-                if (child_block := self._extract_blocks_hierarchical(child, source_code, filepath, current_block)) is not None
-            ]
+            # Process its children
+            child_blocks = self._process_children(node, source_code, filepath, current_block)
+            current_block.children.extend(child_blocks)
             return current_block
-        # Process container nodes
+        # If not a block but has children, process them
         elif node.children:
-            container_block = MyBlock(
-                type="container",
-                name="container",
-                span=Chunk(node.start_byte, node.end_byte),
-                node=node,
-                filepath=filepath,
-                code_content=source_code[node.start_byte:node.end_byte],
-                parent=parent_block
-            )
-            # Process children of container
-            for child in node.children:
-                child_block = self._extract_blocks_hierarchical(child, source_code, filepath, parent_block)
-                if child_block:
-                    container_block.children.append(child_block)
+            child_blocks = self._process_children(node, source_code, filepath, parent_block)
+            return child_blocks[0] if len(child_blocks) == 1 else None
             
-            return container_block if container_block.children else None
-        else:
-            return None
+        return None
+
 
     @staticmethod
     def _get_block_type(node: Node) -> str:
@@ -401,7 +394,7 @@ class CodeProcessor:
 
         
         self.dependency_extractor.extract_dependencies(all_blocks, self.block_map)  # Pass the global block_map here
-        self.print_graph()
+        print (self.print_graph())
 
         # self.abstract_generator.generate_abstracts(all_blocks)
 
