@@ -5,22 +5,31 @@ from core.schema import MyBlock
 class PythonDependencyExtractor:
     def __init__(self):
         self.visited_nodes: Set[int] = set()
+        self.visited_blocks: Set[int] = set() 
         
     def extract_dependencies(self, blocks: List[MyBlock], block_map: Dict[str, MyBlock]):
         """Extract dependencies for all blocks recursively with cycle detection."""
+        self.visited_blocks.clear()
         self.visited_nodes.clear()
         for block in blocks:
+            if id(block) in self.visited_blocks:
+                continue
             self._process_block(block, block_map)
             
     def _process_block(self, block: MyBlock, block_map: Dict[str, MyBlock]):
         """Process a single block and its children."""
-        self._find_dependencies(block.node, block, block_map)
         
+        
+        self.visited_blocks.add(id(block))
+        self.visited_nodes.clear()
+        self._find_dependencies(block.node, block, block_map)
+
+         
         if block.children:
             for child in block.children:
-                if id(child) not in self.visited_nodes:
-                    self.visited_nodes.add(id(child))
-                    self._process_block(child, block_map)
+                if id(child) in self.visited_blocks: 
+                    continue
+                self._process_block(child, block_map)
 
     def _find_dependencies(self, node: Node, block: MyBlock, block_map: Dict[str, MyBlock]):
         """Find dependencies in a node recursively with Python-specific pattern matching."""

@@ -25,69 +25,16 @@ from embedding.embedding import CodeEmbedding
 from database.vector_store import VectorStore, VectorNode
 from embedding.embedding import EmbeddingStrategy
 from database.snippet_database import Snippet
-from languages.python.python_parser import PythonDependencyExtractor
-from languages.javascript.javascript_parser import JavaScriptDependencyExtractor
+from core.schema import MyBlock, Chunk
+from core.languages.python.python_parser import PythonDependencyExtractor
+from core.languages.javascript.javascript_parser import JavaScriptDependencyExtractor
 
-@dataclass
-class Chunk:
-    start: int
-    end: int
 
 def _get_line_number_from_char_index(index: int, source_code: str) -> int:
     """Placeholder for your actual line number calculation."""
     return source_code.encode("utf-8")[:index].count(b'\n') + 1
 
-
-class LLMAdapter:
-    def chat_completion(self, user_prompt, system_prompt):
-        # Mock implementation - replace with your actual LLM interaction
-        print("----- LLM Prompt -----")
-        print(f"System: {system_prompt}")
-        print(f"User: {user_prompt}")
-        print("----- LLM Response -----")
-        return "Mock LLM abstract response."
     
-    
-class LLMAdapter:
-    def chat_completion(self, user_prompt, system_prompt):
-        # Mock implementation - replace with your actual LLM interaction
-        print("----- LLM Prompt -----")
-        print(f"System: {system_prompt}")
-        print(f"User: {user_prompt}")
-        print("----- LLM Response -----")
-        return "Mock LLM abstract response."
-    
-# --- Data Model ---
-
-@dataclass
-class MyBlock:
-    type: str
-    name: str
-    span: Chunk
-    node: Node
-    filepath: str
-    code_content: str
-    children: List["MyBlock"] = None  # Will be initialized in post_init
-    parent: Optional["MyBlock"] = None
-    dependencies: List["MyBlock"] = None  # Will be initialized in post_init
-    dependents: List["MyBlock"] = None  # Will be initialized in post_init
-    abstract: Optional[str] = None
-
-    def __post_init__(self):
-        # Initialize lists properly
-        self.children = [] if self.children is None else self.children
-        self.dependencies = [] if self.dependencies is None else self.dependencies
-        self.dependents = [] if self.dependents is None else self.dependents
-
-    def __hash__(self):
-        return hash(self.name + self.code_content)
-
-    def __eq__(self, other):
-        if not isinstance(other, MyBlock):
-            return False
-        if self.name == other.name:
-            return self.code_content == other.code_content
-        return False
 
 # --- Interfaces (for Dependency Inversion) ---
 
@@ -348,7 +295,7 @@ class CodeProcessor:
         
         self.dependency_extractor.extract_dependencies(all_blocks, self.block_map)  # Pass the global block_map here
         
-        # self.abstract_generator.generate_abstracts(all_blocks)
+        self.abstract_generator.generate_abstracts(all_blocks)
         self.print_graph()
         # self.make_rag()
         
@@ -461,16 +408,16 @@ class TestCodeProcessor(unittest.TestCase):
         )
         # Get the path to embedding.py
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        embedding_path = os.path.join(current_dir, 'code_chunker.py')
+        path = os.path.join(current_dir, 'code_chunker.py')
         
         # Read the embedding.py file
-        with open(embedding_path, 'r') as f:
-            embedding_content = f.read()
+        with open(path, 'r') as f:
+            content = f.read()
             
         codebases = [
             Snippet(
-                content=embedding_content,
-                file_path="embedding.py"
+                content=content,
+                file_path="code_chunker.py"
             )
         ]
         
