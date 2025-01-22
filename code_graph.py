@@ -12,13 +12,21 @@
 
 
 import textwrap
+import unittest
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Protocol
-
 from tree_sitter import Node
 from tree_sitter_languages import get_parser
 from abc import ABC, abstractmethod
+from whats_that_code.election import guess_language_all_methods
 
+from embedding.llm_adapter import LLMAdapter
+from embedding.embedding import CodeEmbedding
+from database.vector_store import VectorStore, VectorNode
+from embedding.embedding import EmbeddingStrategy
+from database.snippet_database import Snippet
+from languages.python.python_parser import PythonDependencyExtractor
+from languages.javascript.javascript_parser import JavaScriptDependencyExtractor
 
 @dataclass
 class Chunk:
@@ -29,6 +37,17 @@ def _get_line_number_from_char_index(index: int, source_code: str) -> int:
     """Placeholder for your actual line number calculation."""
     return source_code.encode("utf-8")[:index].count(b'\n') + 1
 
+
+class LLMAdapter:
+    def chat_completion(self, user_prompt, system_prompt):
+        # Mock implementation - replace with your actual LLM interaction
+        print("----- LLM Prompt -----")
+        print(f"System: {system_prompt}")
+        print(f"User: {user_prompt}")
+        print("----- LLM Response -----")
+        return "Mock LLM abstract response."
+    
+    
 class LLMAdapter:
     def chat_completion(self, user_prompt, system_prompt):
         # Mock implementation - replace with your actual LLM interaction
@@ -109,31 +128,28 @@ class TreeSitterCodeParser(CodeParser):
     def parse(self, source_code: str, language: str, filepath: str) -> List[MyBlock]:
         parser = get_parser(language)
         tree = parser.parse(source_code.encode("utf8"))
-        root_block = self._extract_blocks_hierarchical(tree.root_node, source_code, filepath)
-        if root_block:
-            top_level_blocks = root_block.children
-            return top_level_blocks
-        else:
-            return []
+        return self._process_children(tree.root_node, source_code, filepath, None)
+        
 
     def _process_children(self, node: Node, source_code: str, filepath: str, parent_block: Optional["MyBlock"]) -> List[MyBlock]:
         """Process all children of a node and return valid blocks."""
-        child_blocks = []
+        blocks = []
         for child in node.children:
-            if child_block := self._extract_blocks_hierarchical(child, source_code, filepath, parent_block):
-                child_blocks.append(child_block)
-        return child_blocks
+            if child_blocks := self._extract_blocks_hierarchical(child, source_code, filepath, parent_block):
+                blocks.extend(child_blocks)
+        return blocks
 
     def _extract_blocks_hierarchical(self, node: Node, source_code: str, filepath: str, 
                                    parent_block: Optional["MyBlock"] = None) -> Optional[MyBlock]:
         """Extract code blocks from the AST in a hierarchical manner."""
+        blocks, current_block = [], None
         block_type = self._get_block_type(node)
         block_span = Chunk(node.start_byte, node.end_byte)
         code_content = source_code[block_span.start:block_span.end]
         if block_type:
             # Create block for current node
-            block_name = self._get_block_name(node, block_type)
-
+            file_name = filepath.split('/')[-1] if filepath else "unknown_file"
+            block_name = self._get_block_name(node, block_type) or file_name
             full_name = self._get_full_block_name(block_name, parent_block)
             current_block = MyBlock(
                 type=block_type,
@@ -145,24 +161,19 @@ class TreeSitterCodeParser(CodeParser):
                 parent=parent_block
             )
             print ('Blocktype:', block_type, ', Name: ', full_name, ', Span: ', block_span, end="\n\n")
-
-            if parent_block: parent_block.children.append(current_block)
             self.block_map[full_name] = current_block
-            # Process its children
-            child_blocks = self._process_children(node, source_code, filepath, current_block)
-            current_block.children.extend(child_blocks)
-            return current_block
-        # If not a block but has children, process them
-        elif node.children:
-            child_blocks = self._process_children(node, source_code, filepath, parent_block)
-            return child_blocks[0] if len(child_blocks) == 1 else None
-            
-        return None
-
+            if parent_block: parent_block.children.append(current_block)
+            blocks.append(current_block)
+        
+        child_blocks = self._process_children(node, source_code, filepath, current_block or parent_block)
+        return blocks + child_blocks
 
     @staticmethod
     def _get_block_type(node: Node) -> str:
         try:
+            # Handle file-level nodes
+            # if node.type in ["program", "module", "source_file"]:
+            #     return "file"
             if node.type in ["function_definition","function_declaration","arrow_function","method_definition"]:
                 return 'function'
             elif node.type in ["class_definition", "class_declaration"]:
@@ -216,73 +227,6 @@ class TreeSitterCodeParser(CodeParser):
 
 
 
-class SimpleDependencyExtractor(DependencyExtractor):
-
-    def extract_dependencies(self, blocks: List[MyBlock], block_map: Dict[str, MyBlock]):
-        for block in blocks:
-            self._find_dependencies(block, block_map)
-            if block.children:
-                self.extract_dependencies(block.children, block_map)  # recursive call
-
-    def _find_dependencies(self, block: MyBlock, block_map: Dict[str, MyBlock]):
-        for child in block.node.children:
-            if child.type == 'call_expression':
-                function_node = child.child_by_field_name('function')
-                if function_node:
-                    dependency_name = self._extract_dependency_name(function_node)
-                    if dependency_name:
-                        full_dependency_name = self._resolve_dependency_name(dependency_name, block, block_map)
-                        if full_dependency_name in block_map:
-                            dependency_block = block_map[full_dependency_name]
-                            block.dependencies.append(dependency_block)
-                            dependency_block.dependents.append(block)
-            else:
-                self._find_dependencies_recursive(child, block, block_map)
-
-    def _find_dependencies_recursive(self, node: Node, block: MyBlock, block_map: Dict[str, MyBlock]):
-        for child in node.children:
-            if child.type == 'call_expression':
-                function_node = child.child_by_field_name('function')
-                if function_node:
-                    dependency_name = self._extract_dependency_name(function_node)
-                    if dependency_name:
-                        full_dependency_name = self._resolve_dependency_name(dependency_name, block, block_map)
-                        if full_dependency_name in block_map:
-                            dependency_block = block_map[full_dependency_name]
-                            block.dependencies.append(dependency_block)
-                            dependency_block.dependents.append(block)
-            else:
-                self._find_dependencies_recursive(child, block, block_map)
-
-    def _extract_dependency_name(self, node: Node) -> Optional[str]:
-        if node.type == "identifier":
-            return node.text.decode("utf-8")
-        elif node.type == "member_expression":
-            object_node = node.child_by_field_name("object")
-            property_node = node.child_by_field_name("property")
-            if object_node and property_node:
-                object_name = self._extract_dependency_name(object_node)
-                property_name = property_node.text.decode("utf-8")
-                if object_name:
-                    return f"{object_name}.{property_name}"
-                else:
-                    return property_name
-        return None
-
-    def _resolve_dependency_name(self, dependency_name: str, current_block: MyBlock, block_map: Dict[str, MyBlock]) -> str:
-        parent = current_block.parent
-        while parent:
-            full_name_attempt = f"{parent.name}.{dependency_name}"
-            if full_name_attempt in block_map:
-                return full_name_attempt
-            parent = parent.parent
-
-        if dependency_name in block_map:
-            return dependency_name
-
-        return dependency_name
-
-
 
 """
 Does topological sort and starts making abstracts
@@ -294,8 +238,6 @@ class LLMBasedAbstractGenerator(AbstractGenerator):
             Provide a concise summary of the following code block, including its purpose, parameters, and return value:
             {{CODE_CHUNK}}
             Located in the file: {{PATH_TO_FILE}}
-
-            Summary:
         """
 
     def generate_abstracts(self, blocks: List[MyBlock]):
@@ -307,15 +249,18 @@ class LLMBasedAbstractGenerator(AbstractGenerator):
                     for dep in block.dependencies
                     if dep.abstract
                 }
-                block.abstract = self._generate_abstract(block, dependency_abstracts)
+                block.abstract = self._generate_abstract_prompt(block, dependency_abstracts)
 
-    def _generate_abstract(self, block: MyBlock, dependency_abstracts: Dict[str, str]) -> str:
-        system_prompt = "You are a helpful assistant that generates concise function/class abstracts."
+    def _generate_abstract_prompt(self, block: MyBlock, dependency_abstracts: Dict[str, str]) -> str:
+        system_prompt = "You are a helpful assistant that generates concise function/class abstracts without referencing the dependency function calls in the code block."
         user_prompt = self.function_summary_prompt.replace('{{PATH_TO_FILE}}', block.filepath)
         user_prompt = user_prompt.replace('{{CODE_CHUNK}}', block.code_content)
 
         if dependency_abstracts:
-            user_prompt += "\n\nDependencies:\n"
+            user_prompt += "\n\nThis is the abstract of its dependency functions, \
+            please use this information to generate a cohesive abstract as though the called functions were replaced by their actual code \
+            , refrain from sayhing that the dependency functions were called \
+            , instead give what the whole function would do:\n"
             for name, abstract in dependency_abstracts.items():
                 user_prompt += f"- {name}: {abstract}\n"
 
@@ -377,16 +322,24 @@ class Neo4jGraphDatabase(GraphDatabase):
 """
 
 class CodeProcessor:
-    def __init__(self, code_parser: CodeParser, dependency_extractor: DependencyExtractor, abstract_generator: AbstractGenerator, graph_database: GraphDatabase = None):
+    def __init__(self, code_parser: CodeParser, 
+    dependency_extractor: DependencyExtractor, 
+    abstract_generator: AbstractGenerator,
+    vector_store: VectorStore = None, 
+    graph_database: GraphDatabase = None):
         self.code_parser = code_parser
         self.dependency_extractor = dependency_extractor
         self.abstract_generator = abstract_generator
         self.graph_database = graph_database
         self.block_map: Dict[str, MyBlock] = {}
+        self.embedding_generator = CodeEmbedding(use_llm=True)
 
-    def process_codebase(self, codebases: List[Tuple[str, str, str]]):
+    def process_codebase(self, codebases: List[Snippet]):
         all_blocks = []
-        for source_code, language, filepath in codebases:
+        for snippet in codebases:
+            source_code, filepath = snippet.content, snippet.file_path
+            language = guess_language_all_methods(code=source_code, file_name=filepath)
+            print (language, end=', ')
             blocks = self.code_parser.parse(source_code, language, filepath)
             all_blocks.extend(blocks)
             # Update the global block_map with the blocks from this file
@@ -394,9 +347,11 @@ class CodeProcessor:
 
         
         self.dependency_extractor.extract_dependencies(all_blocks, self.block_map)  # Pass the global block_map here
-        print (self.print_graph())
-
+        
         # self.abstract_generator.generate_abstracts(all_blocks)
+        self.print_graph()
+        # self.make_rag()
+        
 
         # Store in Neo4j
         # for block in all_blocks:
@@ -404,13 +359,28 @@ class CodeProcessor:
         #     for dep in block.dependencies:
         #         self.graph_database.create_or_update_relationship(block, dep, "DEPENDS_ON")
 
+    def make_rag(self, all_blocks: List[MyBlock]):
+        for block in all_blocks:
+            # --- Create embeddings
+            my_text = block.filepath + block.abstract + block.code_content
+            embedding = self.embedding_generator.generate_embeddings(my_text)
+            print(f'embedding size ({len(embedding)})')
+            # --- Store embeddings
+            v = VectorNode(embedding=embedding, metadata={
+                "repo_id": repo_id,
+                "code_chunk": code_chunk,
+                "file_path": file_path,
+                "abstract": abstract,
+            })
+            self.vector_store.add_vectors([v])
+
 
     def print_graph(self):
         """Prints the graph structure of the codebase."""
-
+        print ('----------- Graph ------------ ')
         def _print_block(block: MyBlock, indent_level=0):
             indent = "  " * indent_level
-            print(f"{indent}Type: {block.type}, Name: {block.name}, File: {block.filepath}")
+            print(f"\n{indent}Type: {block.type}, Name: {block.name}, File: {block.filepath}")
             if block.abstract:
                 print(f"{indent}  Abstract: {block.abstract}")
 
@@ -423,7 +393,7 @@ class CodeProcessor:
                 print(f"{indent}    - {dep.name}")
             
             for child in block.children:
-                _print_block(child, indent_level + 1)
+                _print_block(child, indent_level + 2)
 
         for block_name, block in self.block_map.items():
             # Check if the block is a top-level block (no parent)
@@ -434,60 +404,82 @@ class CodeProcessor:
 
 
 
-def main():
-    # --- Configuration (Replace with your actual values) ---
-    neo4j_uri = "bolt://localhost:7687"
-    neo4j_user = "neo4j"
-    neo4j_password = "password"
+import os
+class TestCodeProcessor(unittest.TestCase):
+    def setUp(self):
+        llm_adapter = LLMAdapter()
+        self.code_parser = TreeSitterCodeParser()
+        self.abstract_generator = LLMBasedAbstractGenerator(llm_adapter)
 
-    # --- Instantiate the components ---
-    llm_adapter = LLMAdapter()  # Replace with your LLM adapter
-    code_parser = TreeSitterCodeParser()
-    dependency_extractor = SimpleDependencyExtractor()
-    abstract_generator = LLMBasedAbstractGenerator(llm_adapter)
-    # graph_database = Neo4jGraphDatabase(neo4j_uri, neo4j_user, neo4j_password)
 
-    code_processor = CodeProcessor(code_parser, dependency_extractor, abstract_generator)
-
-    # --- Process the codebase (Example with dummy code snippets) ---
-    
-    # Example usage with multiple codebases
-    codebases = [
-        (
-            """
-class MyClass {
-    function myFunction(a, b) {
-        return a + b;
-    }
-    function myFunction2() {
-        return this.myFunction(1, 2);
-    }
-}
-            """,
-            "javascript",
-            "file1.js",
-        ),
-        (
-            """
-function anotherFunction() {
-    console.log("Hello");
-}
-function anotherFunction2() {
-    return anotherFunction()
-}
-            """,
-            "javascript",
-            "file2.js",
+    def test_process_js_snippets(self):
+        self.dependency_extractor = JavaScriptDependencyExtractor()
+        self.code_processor = CodeProcessor(
+            self.code_parser,
+            self.dependency_extractor,
+            self.abstract_generator
         )
-    ]
-    code_processor.process_codebase(codebases)
+        codebases = [
+            Snippet(
+                content="""
+        class MyClass {
+            function myFunction(a, b) {
+                return a + b;
+            }
+            function myFunction2() {
+                return this.myFunction(1, 2);
+            }
+        }
+                """,
+                file_path="file1.js"
+            ),
+            Snippet(
+                content="""
+        function anotherFunction() {
+            console.log("Hello");
+        }
+        function anotherFunction2() {
+            return anotherFunction()
+        }
+                """,
+                file_path="file2.js"
+            )
+        ]
+        
+        # Process the codebase
+        result = self.code_processor.process_codebase(codebases)
+        
+        # Add assertions based on expected behavior
+        self.assertIsNotNone(result)  # Replace with more specific assertions
+        
+    def test_process_embedding_file(self):
+        self.dependency_extractor = PythonDependencyExtractor()
+        self.code_processor = CodeProcessor(
+            self.code_parser,
+            self.dependency_extractor,
+            self.abstract_generator
+        )
+        # Get the path to embedding.py
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        embedding_path = os.path.join(current_dir, 'code_chunker.py')
+        
+        # Read the embedding.py file
+        with open(embedding_path, 'r') as f:
+            embedding_content = f.read()
+            
+        codebases = [
+            Snippet(
+                content=embedding_content,
+                file_path="embedding.py"
+            )
+        ]
+        
+        # Process the embedding file
+        result = self.code_processor.process_codebase(codebases)
+        
+        # Add assertions
+        self.assertIsNotNone(result)
+        # Add more specific assertions based on what you expect from processing embedding.py
 
-    print("Codebase processed and abstracts generated. Data stored in Neo4j.")
-    # graph_database.close()
-
-
-
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    unittest.main()
