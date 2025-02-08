@@ -270,15 +270,16 @@ class Neo4jGraphDatabase(GraphDatabase):
 
 class CodeProcessor:
     def __init__(self, code_parser: CodeParser, 
-    dependency_extractor: DependencyExtractor, 
-    abstract_generator: AbstractGenerator,
-    vector_store: VectorStore = None, 
-    graph_database: GraphDatabase = None):
+            dependency_extractor: DependencyExtractor, 
+            abstract_generator: AbstractGenerator,
+            vector_store: VectorStore = None, 
+            graph_database: GraphDatabase = None):
         self.code_parser = code_parser
         self.dependency_extractor = dependency_extractor
         self.abstract_generator = abstract_generator
         self.graph_database = graph_database
         self.block_map: Dict[str, MyBlock] = {}
+        self.vector_store = vector_store
         self.embedding_generator = CodeEmbedding(use_llm=True)
 
     def process_codebase(self, codebases: List[Snippet]):
@@ -297,7 +298,7 @@ class CodeProcessor:
         
         self.abstract_generator.generate_abstracts(all_blocks)
         self.print_graph()
-        # self.make_rag()
+        self.make_rag(0, all_blocks)
         
 
         # Store in Neo4j
@@ -306,7 +307,7 @@ class CodeProcessor:
         #     for dep in block.dependencies:
         #         self.graph_database.create_or_update_relationship(block, dep, "DEPENDS_ON")
 
-    def make_rag(self, all_blocks: List[MyBlock]):
+    def make_rag(self, repo_id, all_blocks: List[MyBlock]):
         for block in all_blocks:
             # --- Create embeddings
             my_text = block.filepath + block.abstract + block.code_content
@@ -315,9 +316,9 @@ class CodeProcessor:
             # --- Store embeddings
             v = VectorNode(embedding=embedding, metadata={
                 "repo_id": repo_id,
-                "code_chunk": code_chunk,
-                "file_path": file_path,
-                "abstract": abstract,
+                "code_chunk": block.code_content,
+                "file_path": block.filepath,
+                "abstract": block.abstract,
             })
             self.vector_store.add_vectors([v])
 
