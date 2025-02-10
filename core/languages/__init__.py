@@ -1,0 +1,2 @@
+from core.languages.javascript.javascript_parser import JavaScriptDependencyExtractor
+from core.languages.python.python_parser import PythonDependencyExtractor
