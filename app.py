@@ -1,12 +1,17 @@
 import os
 import streamlit as st
+from dotenv import load_dotenv
+from typing import List
+
+
 import code_chunker
-from embedding.llm_adapter import LLMAdapter
+import code_graph
 from github_interface import load_github_codebase
 from embedding.embedding import CodeEmbedding  # Import the CodeEmbedding class
-from dotenv import load_dotenv
-
+from embedding.llm_adapter import LLMAdapter
 from embedding.context_wrapper import Summarizer
+import core.languages as languages
+
 from database.vector_store import VectorStore, VectorNode
 from database.snippet_database import SnippetDatabase, Snippet
 load_dotenv()
@@ -167,8 +172,9 @@ def process_snippets(snippets, repo_id, vector_store, embedding_generator):
         if vector_store.does_embedding_exist(repo_id):
             return
             
-        for snippet_content, file_path in snippets:
+        for snippet in snippets:
             try:
+                file_path, snippet_content = snippet.file_path, snippet.content
                 code_chunks = code_chunker.chunk_code(snippet_content)
                 process_code_chunks(code_chunks, file_path, repo_id, vector_store, embedding_generator)
             except Exception as e:
@@ -180,7 +186,31 @@ def process_snippets(snippets, repo_id, vector_store, embedding_generator):
 
 def load_codebase_callback(local_codebase_dir, github_repo_url, vector_store, embedding_generator):
     loader = CodebaseLoader(local_codebase_dir, github_repo_url)
-    snippets: Snippet = loader.load_codebase()
+    snippets: List[Snippet] = loader.load_codebase()
+    if not snippets:
+        st.error("No snippets found. Please check the input.")
+        return
+    dir_structure = loader.extract_dir_structure(snippets)
+    repo_id = loader.repo_id
+    print(f"Repo ID: {repo_id}, \nDir Structure:\n {dir_structure}")
+    st.session_state.dir_structure = dir_structure
+    st.session_state.embeddings = []
+    st.session_state.code_chunks = []
+    st.success(f"Loaded {len(snippets)} snippets.")
+
+    # --- Process Snippets
+    process_snippets(snippets, repo_id, vector_store, embedding_generator)
+    st.write("Embeddings generated successfully.")
+    st.session_state.step = 2
+    # ---- Show query interface after successful loading
+    handle_query_interface(vector_store, embedding_generator)
+
+
+
+
+def load_codebase_callback_graph(local_codebase_dir, github_repo_url, vector_store, embedding_generator):
+    loader = CodebaseLoader(local_codebase_dir, github_repo_url)
+    snippets: List[Snippet] = loader.load_codebase()
     
     if not snippets:
         st.error("No snippets found. Please check the input.")
@@ -189,13 +219,20 @@ def load_codebase_callback(local_codebase_dir, github_repo_url, vector_store, em
     dir_structure = loader.extract_dir_structure(snippets)
     repo_id = loader.repo_id
     print(f"Repo ID: {repo_id}, \nDir Structure:\n {dir_structure}")
-    
     st.session_state.dir_structure = dir_structure
     st.session_state.embeddings = []
     st.session_state.code_chunks = []
     
     st.success(f"Loaded {len(snippets)} snippets.")
-    process_snippets(snippets, repo_id, vector_store, embedding_generator)
+    # --- Instantiate the components ---
+    llm_adapter = LLMAdapter()  # Replace with your LLM adapter
+    code_parser = code_graph.TreeSitterCodeParser()
+    dependency_extractor = languages.PythonDependencyExtractor()
+    abstract_generator = code_graph.LLMBasedAbstractGenerator(llm_adapter)
+    vector_store = VectorStore(collection_name="dev_codebase2", vector_size=1536)
+    # graph_database = Neo4jGraphDatabase(neo4j_uri, neo4j_user, neo4j_password)
+    code_processor = code_graph.CodeProcessor(code_parser, dependency_extractor, abstract_generator, vector_store)
+    code_processor.process_codebase(snippets)
     st.write("Embeddings generated successfully.")
     st.session_state.step = 2
     # Show query interface after successful loading
@@ -229,17 +266,14 @@ def main():
     
     # Create columns with different widths (3:1 ratio)
     col1, col2 = st.columns([3, 1])
-    
     if 'active_column' not in st.session_state:
         st.session_state.active_column = None
 
     col1, col2 = st.columns([1, 1])
-
     with col1:
         if st.button("Load Codebase"):
             st.session_state.active_column = 'col1'
             st.rerun()
-
     with col2:
         if st.button("Load Recursive Abstract Maker"):
             st.session_state.active_column = 'col2'
@@ -252,7 +286,7 @@ def main():
     elif st.session_state.active_column == 'col2':
         st.empty()  # Clear previous layout
         # Add your recursive abstract maker code here
-        pass
+        load_codebase_callback_graph(local_codebase_dir, github_repo_url, vector_store, embedding_generator)
                 
 
             
